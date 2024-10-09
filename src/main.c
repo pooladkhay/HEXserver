@@ -11,12 +11,16 @@
 #include <sys/uio.h>
 #include <unistd.h>
 
+#include "proto.h"
+
 #define Q_LEN 64
 #define PORT 8081
-#define BUF_LEN 512
+#define BUF_LEN 1024 * 4
+#define MAX_DECODED_LEN 128
 
 int ret, nbytes;
-char buf[BUF_LEN];
+uint8_t buf[BUF_LEN];
+decoded_block_t blocks[MAX_DECODED_LEN];
 struct iovec iov;
 
 uint16_t port = PORT;
@@ -114,19 +118,29 @@ static int uring_process_cqe() {
   nbytes = cqe->res;
 
   if (nbytes > 0) {
-    if (nbytes < BUF_LEN) {
-      buf[nbytes] = '\0';
-    } else {
-      buf[BUF_LEN - 1] = '\0';
-    }
 
     char client_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip,
               INET_ADDRSTRLEN); // Assuming client is using IPv4
     int client_port = ntohs(client_addr.sin_port);
+
     printf("------------\n");
     printf("Read '%d' bytes from %s:%d\n", nbytes, client_ip, client_port);
-    printf("Message: %s\n", buf);
+    printf("--> Message:\n");
+
+    int blocks_count = decode(buf, blocks, MAX_DECODED_LEN);
+    if (blocks_count == -1) {
+      perror("decode failed:");
+      return -1;
+    }
+
+    printf("block_count: %d\n", blocks_count);
+    for (int i = 0; i < blocks_count; i++) {
+      printf("-----\n");
+      printf("name: %s\n", blocks[i].name);
+      printf("name_len: %d\n", blocks[i].name_len);
+      printf("score: %d\n", blocks[i].score);
+    }
   }
 
   io_uring_cqe_seen(&ring, cqe);

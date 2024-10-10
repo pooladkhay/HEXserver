@@ -43,6 +43,7 @@ typedef struct _decoded_block {
 // Return the number of blocks written, or `-1` on error with `errno` set.
 // `decoded_blocks` is only valid as long as `raw_data` is valid. Accessing
 // `decoded_blocks` after `raw_data` is invalid results in undefined behavior.
-int decode(uint8_t *raw_data, decoded_block_t *decoded_blocks, int decoded_blocks_len);
+int decode(uint8_t *raw_data, int raw_data_max_len,
+           decoded_block_t *decoded_blocks, int decoded_blocks_max_len);
 
 #endif

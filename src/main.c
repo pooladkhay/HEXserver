@@ -128,7 +128,7 @@ static int uring_process_cqe() {
     printf("Read '%d' bytes from %s:%d\n", nbytes, client_ip, client_port);
     printf("--> Message:\n");
 
-    int blocks_count = decode(buf, blocks, MAX_DECODED_LEN);
+    int blocks_count = decode(buf, BUF_LEN, blocks, MAX_DECODED_LEN);
     if (blocks_count == -1) {
       perror("decode failed:");
       return -1;

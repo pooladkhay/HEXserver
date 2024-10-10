@@ -24,19 +24,15 @@ typedef struct _block_header {
   uint8_t name_len;
 } block_header_t;
 
-// Writes up to `decoded_blocks_len` blocks to `decoded_blocks`.
+// Writes up to `decoded_blocks_max_len` blocks to `decoded_blocks`.
 // Return the number of blocks written, or `-1` on error with `errno` set.
 // `decoded_blocks` is only valid as long as `raw_data` is valid. Accessing
 // `decoded_blocks` after `raw_data` is invalid results in undefined behavior.
-int decode(uint8_t *raw_data, decoded_block_t *decoded_blocks,
-           int decoded_blocks_len) {
+int decode(uint8_t *raw_data, int raw_data_max_len,
+           decoded_block_t *decoded_blocks, int decoded_blocks_max_len) {
 
   errno = 0;
-  if (raw_data == NULL) {
-    errno = EFAULT;
-    return -1;
-  }
-  if (decoded_blocks == NULL) {
+  if (raw_data == NULL || decoded_blocks == NULL) {
     errno = EFAULT;
     return -1;
   }
@@ -46,6 +42,12 @@ int decode(uint8_t *raw_data, decoded_block_t *decoded_blocks,
   if (header->magic_number == MAGIC_NUMBER) {
     if (header->block_count == 0 || header->payload_len == 0)
       return 0;
+
+    if (header->block_count > decoded_blocks_max_len ||
+        header->payload_len + SIZE_OF_HEADER > raw_data_max_len) {
+      errno = ENOBUFS;
+      return -1;
+    }
 
     int block_index = SIZE_OF_HEADER;
     for (int i = 0; i < header->block_count; i++) {
@@ -62,7 +64,7 @@ int decode(uint8_t *raw_data, decoded_block_t *decoded_blocks,
         break;
     }
   } else {
-    errno = EILSEQ;
+    errno = EPROTO;
     return -1;
   }
   return header->block_count;

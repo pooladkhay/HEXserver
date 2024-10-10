@@ -39,7 +39,7 @@ typedef struct _decoded_block {
   uint8_t name_len;
 } decoded_block_t;
 
-// Writes up to `decoded_blocks_len` blocks to `decoded_blocks`.
+// Writes up to `decoded_blocks_max_len` blocks to `decoded_blocks`.
 // Return the number of blocks written, or `-1` on error with `errno` set.
 // `decoded_blocks` is only valid as long as `raw_data` is valid. Accessing
 // `decoded_blocks` after `raw_data` is invalid results in undefined behavior.

@@ -1,162 +1,42 @@
 // This code is intended for single-threaded use only.
 
-#include <arpa/inet.h>
-#include <liburing.h>
-#include <netinet/in.h>
-#include <stdint.h>
+#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/uio.h>
-#include <unistd.h>
 
+#include "io.h"
 #include "proto.h"
 
-#define Q_LEN 64
 #define PORT 8081
 #define BUF_LEN 1024 * 4
-#define MAX_DECODED_LEN 128
+#define MAX_PAYLOAD_BLOCK_COUNT 128
+#define MAX_NAME_LEN 32
+#define MAX_CONNECTED_USERS 64
 
-int ret, nbytes;
+typedef struct _connected_user {
+  char name[MAX_NAME_LEN];
+  uint16_t score;
+  uint8_t name_len;
+  bool connected;
+} connected_user_t;
+
+connected_user_t users[MAX_CONNECTED_USERS];
+
 uint8_t buf[BUF_LEN];
-decoded_block_t blocks[MAX_DECODED_LEN];
-struct iovec iov;
+decoded_block_t blocks[MAX_PAYLOAD_BLOCK_COUNT];
 
-uint16_t port = PORT;
-int server_fd;
-struct sockaddr_in server_addr, client_addr;
-struct msghdr msg;
+io_ctx_t io_ctx;
 
-struct io_uring ring;
-struct io_uring_sqe *sqe;
-struct io_uring_cqe *cqe;
-
-void sigint_handler(int signo) {
-  io_uring_queue_exit(&ring);
-  close(server_fd);
-  exit(0);
-}
-
-static int setup_socket() {
-  server_fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (server_fd == -1) {
-    perror("socket:");
-    return -1;
-  }
-
-  server_addr.sin_family = AF_INET;
-  server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  server_addr.sin_port = htons(port);
-
-  ret = bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr));
-  if (ret != 0) {
-    perror("bind:");
-    close(server_fd);
-    return -1;
-  }
-
-  // setup msg struct
-  msg.msg_name = &client_addr;
-  msg.msg_namelen = sizeof(client_addr);
-  {
-    iov.iov_base = &buf;
-    iov.iov_len = sizeof(buf);
-  }
-  msg.msg_iov = &iov;
-  msg.msg_iovlen = 1;
-
-  return 0;
-}
-
-static int io_uring_init() {
-  struct io_uring_params params;
-
-  memset(&params, 0, sizeof(params));
-
-  // params.cq_entries = Q_LEN * 8;
-  params.flags = IORING_SETUP_COOP_TASKRUN |
-                 IORING_SETUP_SINGLE_ISSUER; // | IORING_SETUP_CQSIZE |
-                                             // IORING_SETUP_SUBMIT_ALL;
-
-  return io_uring_queue_init_params(Q_LEN, &ring, &params);
-}
-
-static int uring_prep_recvmsg_submit() {
-
-  sqe = io_uring_get_sqe(&ring);
-  if (!sqe) {
-    fprintf(stderr, "io_uring_get_sqe: %s\n",
-            strerror(-ret)); // SQ full
-    return -1;
-  }
-
-  io_uring_prep_recvmsg(sqe, server_fd, &msg, 0);
-
-  ret = io_uring_submit(&ring);
-  if (ret < 0) {
-    fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
-    return -1;
-  }
-
-  return 0;
-}
-
-static int uring_process_cqe() {
-  // change to non-blocking for io_uring_peek_cqe
-  ret = io_uring_wait_cqe(&ring, &cqe);
-  if (ret < 0) {
-    perror("io_uring_wait_cqe:");
-    return -1;
-  }
-  if (cqe->res < 0) {
-    fprintf(stderr, "io_uring_wait_cqe - async request failed: %s\n",
-            strerror(-cqe->res));
-    return -1;
-  }
-
-  nbytes = cqe->res;
-
-  if (nbytes > 0) {
-
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip,
-              INET_ADDRSTRLEN); // Assuming client is using IPv4
-    int client_port = ntohs(client_addr.sin_port);
-
-    printf("------------\n");
-    printf("Read '%d' bytes from %s:%d\n", nbytes, client_ip, client_port);
-    printf("--> Message:\n");
-
-    int blocks_count = decode(buf, BUF_LEN, blocks, MAX_DECODED_LEN);
-    if (blocks_count == -1) {
-      perror("decode failed:");
-      return -1;
-    }
-
-    printf("block_count: %d\n", blocks_count);
-    for (int i = 0; i < blocks_count; i++) {
-      printf("-----\n");
-      printf("name: %s\n", blocks[i].name);
-      printf("name_len: %d\n", blocks[i].name_len);
-      printf("score: %d\n", blocks[i].score);
-    }
-  }
-
-  io_uring_cqe_seen(&ring, cqe);
-
-  return 0;
-}
+void sigint_handler(int signo) { exit(io_cleanup()); }
 
 int main(int argc, char *argv[]) {
-  signal(SIGINT, sigint_handler);
+  int nbytes;
+  uint16_t port = PORT;
 
-  memset(&ring, 0, sizeof(ring));
-  memset(&server_addr, 0, sizeof(server_addr));
-  memset(&client_addr, 0, sizeof(client_addr));
-  memset(&buf, 0, sizeof(buf));
-  memset(&iov, 0, sizeof(iov));
-  memset(&msg, 0, sizeof(msg));
+  signal(SIGINT, sigint_handler);
 
   if (argc > 2 && strcmp(argv[1], "-p") == 0) {
     port = atoi(argv[2]);
@@ -166,36 +46,84 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (setup_socket() < 0) {
-    perror("setup_socket:");
-    return -1;
-  }
-  printf("Listening on port: %d\n", port);
+  memset(&users, 0, sizeof(users));
+  memset(&blocks, 0, sizeof(blocks));
+  memset(buf, 0, BUF_LEN);
 
-  ret = io_uring_init();
-  if (ret < 0) {
-    fprintf(stderr, "io_uring_init: %s\n", strerror(-ret));
-    goto cleanup;
-  }
+  io_ctx.buf = buf;
+  io_ctx.buf_len = BUF_LEN;
+  io_ctx.port = port;
+
+  if (io_init(IO_TYPE_IOURING, &io_ctx) != 0)
+    exit(-1);
 
   while (1) {
-    ret = uring_prep_recvmsg_submit();
-    if (ret < 0) {
-      fprintf(stderr, "uring_prep_recvmsg_submit: %s\n", strerror(-ret));
-      goto cleanup;
+    printf("------------\n");
+    printf("Listening on port: %d\n", port);
+    printf("Waiting for clients...\n");
+    printf("------------\n");
+
+    nbytes = io_recvmsg(&io_ctx);
+    if (nbytes <= 0)
+      continue;
+
+    int blocks_count =
+        decode(io_ctx.buf, nbytes, blocks, MAX_PAYLOAD_BLOCK_COUNT);
+    if (blocks_count == -1) {
+      perror("decode failed");
+      continue;
     }
 
-    printf("------------\n");
-    printf("Waiting for clients...\n");
-    ret = uring_process_cqe();
-    if (ret < 0) {
-      fprintf(stderr, "uring_process_cqe: %s\n", strerror(-ret));
-      goto cleanup;
+    printf("block_count: %d\n", blocks_count);
+    for (int i = 0; i < blocks_count; i++) {
+      // printf("-----\n");
+      // printf("name: %s\n", blocks[i].name);
+      // printf("name_len: %d\n", blocks[i].name_len);
+      // printf("score: %d\n", blocks[i].score);
+
+      bool found = false;
+
+      for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
+        if (!users[j].connected || users[j].name_len != blocks[i].name_len)
+          continue;
+
+        if (strncmp(users[j].name, blocks[i].name, users[j].name_len) == 0) {
+          users[j].score = blocks[i].score;
+          found = true;
+        }
+      }
+
+      if (!found) {
+        for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
+          if (!users[j].connected) {
+            if (blocks[i].name_len + SIZE_OF_NULL_CHAR > MAX_NAME_LEN) {
+              printf("name len is too large.\n");
+              break;
+            }
+            users[j].connected = true;
+            users[j].score = blocks[i].score;
+            users[j].name_len = blocks[i].name_len;
+            strncpy(users[j].name, blocks[i].name,
+                    blocks[i].name_len + SIZE_OF_NULL_CHAR);
+            break;
+          }
+        }
+      }
+    }
+
+    // print connected users and send them to the client.
+    for (int i = 0; i < MAX_CONNECTED_USERS; i++) {
+      if (!users[i].connected)
+        continue;
+
+      printf("-----\n");
+      printf("name: %s\n", users[i].name);
+      printf("name_len: %d\n", users[i].name_len);
+      printf("score: %d\n", users[i].score);
+
+      // send logic
     }
   }
 
-cleanup:
-  io_uring_queue_exit(&ring);
-  close(server_fd);
-  return (ret < 0) ? -1 : 0;
+  return 0;
 }

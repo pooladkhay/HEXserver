@@ -1,7 +1,6 @@
 // This code is intended for single-threaded use only.
 
 #include <signal.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,24 +8,12 @@
 
 #include "io.h"
 #include "proto.h"
+#include "types.h"
 
-#define PORT 8081
-#define BUF_LEN 1024 * 4
-#define MAX_PAYLOAD_BLOCK_COUNT 128
-#define MAX_NAME_LEN 32
-#define MAX_CONNECTED_USERS 64
+connected_user_t connected_users[MAX_CONNECTED_USERS];
 
-typedef struct _connected_user {
-  char name[MAX_NAME_LEN];
-  uint16_t score;
-  uint8_t name_len;
-  bool connected;
-} connected_user_t;
-
-connected_user_t users[MAX_CONNECTED_USERS];
-
-uint8_t buf[BUF_LEN];
-decoded_block_t blocks[MAX_PAYLOAD_BLOCK_COUNT];
+uint8_t io_buf[IO_BUF_LEN];
+decoded_user_t decoded_users[MAX_MSG_BLOCK_COUNT];
 
 io_ctx_t io_ctx;
 
@@ -46,12 +33,12 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  memset(&users, 0, sizeof(users));
-  memset(&blocks, 0, sizeof(blocks));
-  memset(buf, 0, BUF_LEN);
+  memset(&connected_users, 0, sizeof(connected_users));
+  memset(&decoded_users, 0, sizeof(decoded_users));
+  memset(io_buf, 0, IO_BUF_LEN);
 
-  io_ctx.buf = buf;
-  io_ctx.buf_len = BUF_LEN;
+  io_ctx.io_buf = io_buf;
+  io_ctx.io_buf_len = IO_BUF_LEN;
   io_ctx.port = port;
 
   if (io_init(IO_TYPE_IOURING, &io_ctx) != 0)
@@ -67,44 +54,46 @@ int main(int argc, char *argv[]) {
     if (nbytes <= 0)
       continue;
 
-    int blocks_count =
-        decode(io_ctx.buf, nbytes, blocks, MAX_PAYLOAD_BLOCK_COUNT);
-    if (blocks_count == -1) {
+    int decoded_users_count =
+        decode(io_ctx.io_buf, nbytes, decoded_users, MAX_MSG_BLOCK_COUNT);
+    if (decoded_users_count == -1) {
       perror("decode failed");
       continue;
     }
 
-    printf("block_count: %d\n", blocks_count);
-    for (int i = 0; i < blocks_count; i++) {
+    printf("block_count: %d\n", decoded_users_count);
+    for (int i = 0; i < decoded_users_count; i++) {
       // printf("-----\n");
-      // printf("name: %s\n", blocks[i].name);
-      // printf("name_len: %d\n", blocks[i].name_len);
-      // printf("score: %d\n", blocks[i].score);
+      // printf("name: %s\n", decoded_users[i].name);
+      // printf("name_len: %d\n", decoded_users[i].name_len);
+      // printf("score: %d\n", decoded_users[i].score);
 
       bool found = false;
 
       for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
-        if (!users[j].connected || users[j].name_len != blocks[i].name_len)
+        if (!connected_users[j].connected ||
+            connected_users[j].name_len != decoded_users[i].name_len)
           continue;
 
-        if (strncmp(users[j].name, blocks[i].name, users[j].name_len) == 0) {
-          users[j].score = blocks[i].score;
+        if (strncmp(connected_users[j].name, decoded_users[i].name,
+                    connected_users[j].name_len) == 0) {
+          connected_users[j].score = decoded_users[i].score;
           found = true;
         }
       }
 
       if (!found) {
         for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
-          if (!users[j].connected) {
-            if (blocks[i].name_len + SIZE_OF_NULL_CHAR > MAX_NAME_LEN) {
+          if (!connected_users[j].connected) {
+            if (decoded_users[i].name_len + SIZE_OF_NULL_CHAR > MAX_NAME_LEN) {
               printf("name len is too large.\n");
               break;
             }
-            users[j].connected = true;
-            users[j].score = blocks[i].score;
-            users[j].name_len = blocks[i].name_len;
-            strncpy(users[j].name, blocks[i].name,
-                    blocks[i].name_len + SIZE_OF_NULL_CHAR);
+            connected_users[j].connected = true;
+            connected_users[j].score = decoded_users[i].score;
+            connected_users[j].name_len = decoded_users[i].name_len;
+            strncpy(connected_users[j].name, decoded_users[i].name,
+                    decoded_users[i].name_len + SIZE_OF_NULL_CHAR);
             break;
           }
         }
@@ -113,15 +102,13 @@ int main(int argc, char *argv[]) {
 
     // print connected users and send them to the client.
     for (int i = 0; i < MAX_CONNECTED_USERS; i++) {
-      if (!users[i].connected)
+      if (!connected_users[i].connected)
         continue;
 
       printf("-----\n");
-      printf("name: %s\n", users[i].name);
-      printf("name_len: %d\n", users[i].name_len);
-      printf("score: %d\n", users[i].score);
-
-      // send logic
+      printf("name: %s\n", connected_users[i].name);
+      printf("name_len: %d\n", connected_users[i].name_len);
+      printf("score: %d\n", connected_users[i].score);
     }
   }
 

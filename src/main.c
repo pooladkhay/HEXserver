@@ -17,7 +17,9 @@ decoded_user_t decoded_users[PROTO_MAX_BLOCK_COUNT];
 
 connected_user_t connected_users[MAX_CONNECTED_USERS];
 
-void sigint_handler(int signo) { exit(io_cleanup()); }
+void sigint_handler(int signo);
+void update_connected_users(int decoded_users_count);
+void print_connected_users();
 
 int main(int argc, char *argv[]) {
   int nbytes;
@@ -61,56 +63,68 @@ int main(int argc, char *argv[]) {
       continue;
     }
 
-    printf("block_count: %d\n", decoded_users_count);
-    for (int i = 0; i < decoded_users_count; i++) {
-      // printf("-----\n");
-      // printf("name: %s\n", decoded_users[i].name);
-      // printf("name_len: %d\n", decoded_users[i].name_len);
-      // printf("score: %d\n", decoded_users[i].score);
-
-      bool found = false;
-
-      for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
-        if (!connected_users[j].connected ||
-            connected_users[j].name_len != decoded_users[i].name_len)
-          continue;
-
-        if (strncmp(connected_users[j].name, decoded_users[i].name,
-                    connected_users[j].name_len) == 0) {
-          connected_users[j].score = decoded_users[i].score;
-          found = true;
-        }
-      }
-
-      if (!found) {
-        for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
-          if (!connected_users[j].connected) {
-            if (decoded_users[i].name_len + SIZE_OF_NULL_CHAR > MAX_NAME_LEN) {
-              printf("name len is too large.\n");
-              break;
-            }
-            connected_users[j].connected = true;
-            connected_users[j].score = decoded_users[i].score;
-            connected_users[j].name_len = decoded_users[i].name_len;
-            strncpy(connected_users[j].name, decoded_users[i].name,
-                    decoded_users[i].name_len + SIZE_OF_NULL_CHAR);
-            break;
-          }
-        }
-      }
+    if (decoded_users_count == 0) {
+      // empty message: heart beat
+      // update "last_updated" field
+      printf("heart beat msg received\n");
+      continue;
     }
 
-    // print connected users and send them to the client.
-    for (int i = 0; i < MAX_CONNECTED_USERS; i++) {
-      if (!connected_users[i].connected)
-        continue;
+    printf("read %d blocks from msg\n", decoded_users_count);
 
-      printf("-----\n");
-      printf("name: %s\n", connected_users[i].name);
-      printf("name_len: %d\n", connected_users[i].name_len);
-      printf("score: %d\n", connected_users[i].score);
-    }
+    update_connected_users(decoded_users_count);
+
+    print_connected_users();
   }
 
   return 0;
 }
+
+void update_connected_users(int decoded_users_count) {
+  for (int i = 0; i < decoded_users_count; i++) {
+    bool found = false;
+
+    for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
+      if (!connected_users[j].connected ||
+          connected_users[j].name_len != decoded_users[i].name_len)
+        continue;
+
+      if (strncmp(connected_users[j].name, decoded_users[i].name,
+                  connected_users[j].name_len) == 0) {
+        connected_users[j].score = decoded_users[i].score;
+        found = true;
+      }
+    }
+
+    if (!found) {
+      for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
+        if (!connected_users[j].connected) {
+          if (decoded_users[i].name_len + SIZE_OF_NULL_CHAR > MAX_NAME_LEN) {
+            printf("name len is too large.\n");
+            break;
+          }
+          connected_users[j].connected = true;
+          connected_users[j].score = decoded_users[i].score;
+          connected_users[j].name_len = decoded_users[i].name_len;
+          strncpy(connected_users[j].name, decoded_users[i].name,
+                  decoded_users[i].name_len + SIZE_OF_NULL_CHAR);
+          break;
+        }
+      }
+    }
+  }
+}
+
+void print_connected_users() {
+  for (int i = 0; i < MAX_CONNECTED_USERS; i++) {
+    if (!connected_users[i].connected)
+      continue;
+
+    printf("-----\n");
+    printf("name: %s\n", connected_users[i].name);
+    printf("name_len: %d\n", connected_users[i].name_len);
+    printf("score: %d\n", connected_users[i].score);
+  }
+}
+
+void sigint_handler(int signo) { exit(io_cleanup()); }

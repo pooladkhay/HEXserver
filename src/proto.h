@@ -45,4 +45,8 @@
 int decode(uint8_t *raw_data, int raw_data_len, decoded_user_t *decoded_users,
            int decoded_users_max_len);
 
+// Writes up to `buf_len` bytes to `buf`.
+// Return the number of bytes written, or `-1` on error with `errno` set.
+int encode(uint8_t *buf, int buf_len, connected_user_t *users, int users_len);
+
 #endif

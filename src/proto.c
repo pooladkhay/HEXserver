@@ -74,3 +74,54 @@ int decode(uint8_t *raw_data, int raw_data_len, decoded_user_t *decoded_users,
   }
   return header->block_count;
 }
+
+// Writes up to `buf_len` bytes to `buf`.
+// Return the number of bytes written, or `-1` on error with `errno` set.
+int encode(uint8_t *buf, int buf_len, connected_user_t *users, int users_len) {
+
+  errno = 0;
+  if (buf == NULL || users == NULL) {
+    errno = EFAULT;
+    return -1;
+  }
+
+  if (buf_len < sizeof(connected_user_t) * users_len) {
+    errno = ENOBUFS;
+    return -1;
+  };
+
+  // Header
+  uint16_t payload_len = SIZE_OF_HEADER;
+  uint8_t block_count = 0;
+
+  memcpy(buf, &magic_number, sizeof(uint16_t));
+  memcpy(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
+  memcpy(&buf[sizeof(uint16_t) * 2], &block_count, sizeof(uint8_t));
+
+  // Payload
+
+  for (int i = 0; i < users_len; i++) {
+    if (!users[i].connected)
+      continue;
+
+    memcpy(&buf[payload_len], &users[i].score, sizeof(uint16_t));
+    payload_len += sizeof(uint16_t);
+
+    memcpy(&buf[payload_len], &users[i].name_len, sizeof(uint8_t));
+    payload_len += sizeof(uint8_t);
+
+    //  maybe strncpy?
+    int _s = users[i].name_len + SIZE_OF_NULL_CHAR;
+    memcpy(&buf[payload_len], users[i].name, _s);
+    payload_len += _s;
+
+    block_count += 1;
+  }
+
+  if (block_count != 0) {
+    memcpy(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
+    memcpy(&buf[sizeof(uint16_t) * 2], &block_count, sizeof(uint8_t));
+  }
+
+  return payload_len;
+}

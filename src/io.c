@@ -96,8 +96,8 @@ int io_init(int io_type, io_ctx_t *ctx) {
   // setup msg struct for recvmsg
   msg.msg_name = &client_addr;
   msg.msg_namelen = sizeof(client_addr);
-  iov.iov_base = ctx->io_buf;
-  iov.iov_len = ctx->io_buf_len;
+  iov.iov_base = ctx->buf;
+  iov.iov_len = ctx->buf_len;
   msg.msg_iov = &iov;
   msg.msg_iovlen = 1;
 

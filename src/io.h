@@ -6,8 +6,8 @@
 enum { IO_TYPE_IOURING, IO_TYPE_EPOLL, IO_TYPE_DEFAULT };
 
 typedef struct _io_ctx {
-  uint8_t *io_buf;
-  size_t io_buf_len;
+  uint8_t *buf;
+  size_t buf_len;
   uint16_t port;
 } io_ctx_t;
 

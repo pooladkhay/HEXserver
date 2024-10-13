@@ -10,12 +10,12 @@
 #include "proto.h"
 #include "types.h"
 
-connected_user_t connected_users[MAX_CONNECTED_USERS];
-
-uint8_t io_buf[IO_BUF_LEN];
-decoded_user_t decoded_users[MAX_MSG_BLOCK_COUNT];
-
+uint8_t buf[BUF_LEN];
 io_ctx_t io_ctx;
+
+decoded_user_t decoded_users[PROTO_MAX_BLOCK_COUNT];
+
+connected_user_t connected_users[MAX_CONNECTED_USERS];
 
 void sigint_handler(int signo) { exit(io_cleanup()); }
 
@@ -35,10 +35,10 @@ int main(int argc, char *argv[]) {
 
   memset(&connected_users, 0, sizeof(connected_users));
   memset(&decoded_users, 0, sizeof(decoded_users));
-  memset(io_buf, 0, IO_BUF_LEN);
+  memset(buf, 0, BUF_LEN);
 
-  io_ctx.io_buf = io_buf;
-  io_ctx.io_buf_len = IO_BUF_LEN;
+  io_ctx.buf = buf;
+  io_ctx.buf_len = BUF_LEN;
   io_ctx.port = port;
 
   if (io_init(IO_TYPE_IOURING, &io_ctx) != 0)
@@ -55,7 +55,7 @@ int main(int argc, char *argv[]) {
       continue;
 
     int decoded_users_count =
-        decode(io_ctx.io_buf, nbytes, decoded_users, MAX_MSG_BLOCK_COUNT);
+        decode(io_ctx.buf, nbytes, decoded_users, PROTO_MAX_BLOCK_COUNT);
     if (decoded_users_count == -1) {
       perror("decode failed");
       continue;

@@ -6,7 +6,7 @@
 
 #define PORT 8081
 
-#define IO_BUF_LEN 1024 * 4
+#define BUF_LEN 1024 * 4
 
 #define MAX_NAME_LEN 32
 #define MAX_CONNECTED_USERS 64

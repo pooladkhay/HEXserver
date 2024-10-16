@@ -69,15 +69,6 @@ static int uring_process_cqe(io_ctx_t *ctx) {
 
   io_uring_cqe_seen(&ring, cqe);
 
-  // remove or --debug
-  if (cqe->res > 0) {
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
-    int client_port = ntohs(client_addr.sin_port);
-
-    printf("Read '%d' bytes from %s:%d\n", cqe->res, client_ip, client_port);
-  }
-
   return cqe->res;
 }
 
@@ -110,9 +101,8 @@ int io_init(int io_type, io_ctx_t *ctx) {
   return 0;
 }
 
-// This function blocks until a message is received. It reads up to
-// `ctx->buf_len` bytes to `ctx->buf`. Returns the number of bytes read or -1
-// for errors.
+// This function reads up to`ctx->buf_len` bytes to `ctx->buf`. Returns the
+// number of bytes read or -1 for errors.
 int io_recvmsg(io_ctx_t *ctx) {
   sqe = io_uring_get_sqe(&ring);
   if (!sqe) {
@@ -121,17 +111,69 @@ int io_recvmsg(io_ctx_t *ctx) {
     return -1;
   }
 
+  iov.iov_len = ctx->buf_len;
+
   io_uring_prep_recvmsg(sqe, server_fd, &msg, 0);
+
+  sqe->user_data = 'R';
 
   if (io_uring_submit(&ring) < 0) {
     fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
     return -1;
   }
 
+  return 0;
+}
+
+int io_sendmsg(io_ctx_t *ctx, int nbytes) {
+  sqe = io_uring_get_sqe(&ring);
+  if (!sqe) {
+    fprintf(stderr, "io_uring_get_sqe: %s\n",
+            strerror(-ret)); // SQ full
+    return -1;
+  }
+
+  iov.iov_len = nbytes;
+
+  io_uring_prep_sendmsg(sqe, server_fd, &msg, 0);
+
+  sqe->user_data = 'S';
+
+  if (io_uring_submit(&ring) < 0) {
+    fprintf(stderr, "io_uring_submit: %s\n", strerror(-ret));
+    return -1;
+  }
+
+  return 0;
+}
+
+// This function blocks until a message is received. On return, it sets
+// `ctx->req_type` to either 'R' (indicating arrival of a new message) or 'S'
+// (indicating success in sending a message). It returns number of bytes
+// received or sent.
+int io_wait(io_ctx_t *ctx) {
   ret = uring_process_cqe(ctx);
   if (ret < 0) {
     fprintf(stderr, "uring_process_cqe: %s\n", strerror(-ret));
     return -1;
+  }
+
+  char client_ip[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
+  int client_port = ntohs(client_addr.sin_port);
+  if (cqe->res > 0) {
+    switch (cqe->user_data) {
+    case 'R':
+      ctx->req_type = 'R';
+      // --debug
+      printf("Received '%d' bytes from %s:%d\n", ret, client_ip, client_port);
+      break;
+    case 'S':
+      ctx->req_type = 'S';
+      // --debug
+      printf("Sent '%d' bytes to %s:%d\n", ret, client_ip, client_port);
+      break;
+    }
   }
 
   return ret;

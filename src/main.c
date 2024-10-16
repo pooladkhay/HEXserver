@@ -42,39 +42,71 @@ int main(int argc, char *argv[]) {
   io_ctx.buf = buf;
   io_ctx.buf_len = BUF_LEN;
   io_ctx.port = port;
+  io_ctx.req_type = 0;
 
   if (io_init(IO_TYPE_IOURING, &io_ctx) != 0)
     exit(-1);
 
+  io_recvmsg(&io_ctx);
+
   while (1) {
+    // --debug
     printf("------------\n");
     printf("Listening on port: %d\n", port);
     printf("Waiting for clients...\n");
     printf("------------\n");
 
-    nbytes = io_recvmsg(&io_ctx);
+    nbytes = io_wait(&io_ctx);
     if (nbytes <= 0)
       continue;
 
-    int decoded_users_count =
-        decode(io_ctx.buf, nbytes, decoded_users, PROTO_MAX_BLOCK_COUNT);
-    if (decoded_users_count == -1) {
-      perror("decode failed");
-      continue;
+    int decoded_users_count = 0;
+    switch (io_ctx.req_type) {
+    case 'R':
+      decoded_users_count =
+          decode(io_ctx.buf, nbytes, decoded_users, PROTO_MAX_BLOCK_COUNT);
+      if (decoded_users_count == -1) {
+        perror("decode failed");
+        continue;
+      }
+
+      if (decoded_users_count == 0) {
+        // empty message: heart beat
+        // update "last_updated" field
+        printf("heart beat msg received\n");
+        continue;
+      }
+
+      // --debug
+      printf("read %d blocks from msg\n", decoded_users_count);
+
+      update_connected_users(decoded_users_count);
+
+      // --debug
+      print_connected_users();
+
+      // encode connected users and send them to the user whose request was just
+      // processed:
+
+      nbytes =
+          encode(io_ctx.buf, BUF_LEN, connected_users, MAX_CONNECTED_USERS);
+      if (decoded_users_count <= 0) {
+        perror("encode failed");
+        continue;
+      }
+
+      // --debug
+      printf("encoded %d bytes to buf\n", nbytes);
+
+      io_sendmsg(&io_ctx, nbytes);
+
+      break;
+    case 'S':
+      // maybe retry the send if was not successful
+      break;
     }
 
-    if (decoded_users_count == 0) {
-      // empty message: heart beat
-      // update "last_updated" field
-      printf("heart beat msg received\n");
-      continue;
-    }
-
-    printf("read %d blocks from msg\n", decoded_users_count);
-
-    update_connected_users(decoded_users_count);
-
-    print_connected_users();
+    io_recvmsg(&io_ctx);
   }
 
   return 0;

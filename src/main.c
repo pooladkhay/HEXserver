@@ -1,10 +1,12 @@
 // This code is intended for single-threaded use only.
 
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 
 #include "io.h"
 #include "proto.h"
@@ -20,6 +22,7 @@ connected_user_t connected_users[MAX_CONNECTED_USERS];
 void sigint_handler(int signo);
 void update_connected_users(int decoded_users_count);
 void print_connected_users();
+void check_hb_timeout();
 
 int main(int argc, char *argv[]) {
   int nbytes;
@@ -63,6 +66,8 @@ int main(int argc, char *argv[]) {
     int decoded_users_count = 0;
     switch (io_ctx.req_type) {
     case 'R':
+      check_hb_timeout();
+
       decoded_users_count =
           decode(io_ctx.buf, nbytes, decoded_users, PROTO_MAX_BLOCK_COUNT);
       if (decoded_users_count == -1) {
@@ -112,6 +117,8 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
+void sigint_handler(int signo) { exit(io_cleanup()); }
+
 void update_connected_users(int decoded_users_count) {
   for (int i = 0; i < decoded_users_count; i++) {
     bool found = false;
@@ -124,6 +131,7 @@ void update_connected_users(int decoded_users_count) {
       if (strncmp(connected_users[j].name, decoded_users[i].name,
                   connected_users[j].name_len) == 0) {
         connected_users[j].score = decoded_users[i].score;
+        connected_users[j].last_hb = time(NULL);
         found = true;
       }
     }
@@ -138,6 +146,7 @@ void update_connected_users(int decoded_users_count) {
           connected_users[j].connected = true;
           connected_users[j].score = decoded_users[i].score;
           connected_users[j].name_len = decoded_users[i].name_len;
+          connected_users[j].last_hb = time(NULL);
           strncpy(connected_users[j].name, decoded_users[i].name,
                   decoded_users[i].name_len + SIZE_OF_NULL_CHAR);
           break;
@@ -159,4 +168,16 @@ void print_connected_users() {
   }
 }
 
-void sigint_handler(int signo) { exit(io_cleanup()); }
+// Iterates over connected users and if there was no activity recorded during
+// the last `MAX_HEART_BEAT_TIMEOUT`, sets their `connected` value to `false`.
+void check_hb_timeout() {
+  time_t t = time(NULL);
+
+  for (int i = 0; i < MAX_CONNECTED_USERS; i++) {
+    if (!connected_users[i].connected)
+      continue;
+
+    if (difftime(t, connected_users[i].last_hb) > MAX_HEART_BEAT_TIMEOUT)
+      connected_users[i].connected = false;
+  }
+}

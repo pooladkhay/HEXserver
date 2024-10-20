@@ -9,7 +9,7 @@
 // #include <fcntl.h>
 
 #define MAX_BUF_LEN 1024 * 2 // udp does not support fragmentation
-#define HEADER_SIZE sizeof(uint16_t) * 2 + sizeof(uint8_t)
+#define HEADER_SIZE (size_t)((sizeof(uint16_t) * 2) + sizeof(uint8_t))
 
 int main(int argc, char **argv) {
   if (argc < 2) {
@@ -106,12 +106,19 @@ int main(int argc, char **argv) {
     fprintf(stderr, "-------------------\n");
   }
 
-  pl = htons(buf_index - HEADER_SIZE);
+  uint16_t _pl = (uint16_t)(buf_index - HEADER_SIZE);
+
+  if (_pl < 0 || _pl > 65535) {
+    fprintf(stderr, "ERROR: ERANGE");
+    return 1;
+  }
+
+  pl = htons(_pl);
   memcpy(&buf[2], &pl, sizeof(uint16_t));
 
   *(uint8_t *)&buf[4] = count;
 
-  fprintf(stderr, "payload_len: %d\n", htons(*(uint16_t *)&buf[2]));
+  fprintf(stderr, "payload_len: %d\n", ntohs(*(uint16_t *)&buf[2]));
   fprintf(stderr, "count: %d\n", count);
 
   ssize_t written = write(STDOUT_FILENO, buf, buf_index);
@@ -119,7 +126,8 @@ int main(int argc, char **argv) {
     perror("Error writing to stdout");
     return 1;
   } else if (written != buf_index) {
-    fprintf(stderr, "Partial write to stdout. Expected %zu, wrote %zd bytes.\n",
+    fprintf(stderr,
+            "ERROR: Partial write to stdout. Expected %zu, wrote %zd bytes.\n",
             buf_index, written);
     return 1;
   }

@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -12,8 +13,9 @@
 
 // These sizes are defined as the sum of individual members to
 // avoid struct padding issues and `__attribute__((packed))`
-#define SIZE_OF_HEADER sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t)
-#define SIZE_OF_BLOCK_HEADER sizeof(uint16_t) + sizeof(uint8_t)
+#define SIZE_OF_HEADER                                                         \
+  (size_t)(sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint8_t))
+#define SIZE_OF_BLOCK_HEADER (size_t)(sizeof(uint16_t) + sizeof(uint8_t))
 
 uint16_t magic_number = MAGIC_NUMBER;
 
@@ -28,6 +30,10 @@ typedef struct _block_header {
   uint16_t score;
   uint8_t name_len;
 } block_header_t;
+
+// Runs a 16-byte value stored in `dest` through `htons()`. Returns the result
+// of the underlying call to `memcpy()`.
+void *memcpy_htons(void *dest, const void *src, size_t n);
 
 // Writes up to `decoded_users_max_len` users to `decoded_users`.
 // Return the number of users written, or `-1` on error with `errno` set.
@@ -44,28 +50,33 @@ int decode(uint8_t *raw_data, int raw_data_len, decoded_user_t *decoded_users,
 
   header_t *header = (header_t *)raw_data;
 
+  header->magic_number = ntohs(header->magic_number);
+  header->payload_len = ntohs(header->payload_len);
+
   if (header->magic_number == MAGIC_NUMBER) {
     if (header->block_count == 0 || header->payload_len == 0)
       return 0;
 
-    if (header->block_count > decoded_users_max_len ||
-        header->payload_len + SIZE_OF_HEADER > raw_data_len) {
+    if ((size_t)header->block_count > (size_t)decoded_users_max_len ||
+        (size_t)header->payload_len + SIZE_OF_HEADER > (size_t)raw_data_len) {
       errno = ENOBUFS;
       return -1;
     }
 
-    int block_index = SIZE_OF_HEADER;
+    size_t block_index = SIZE_OF_HEADER;
     for (int i = 0; i < header->block_count; i++) {
-      int name_index = block_index + SIZE_OF_BLOCK_HEADER;
+      size_t name_index = block_index + SIZE_OF_BLOCK_HEADER;
 
       block_header_t *bh = (block_header_t *)&raw_data[block_index];
+      bh->score = ntohs(bh->score);
+
       decoded_users[i].score = bh->score;
       decoded_users[i].name_len = bh->name_len;
       decoded_users[i].name = (char *)&raw_data[name_index];
 
-      block_index = name_index + bh->name_len + SIZE_OF_NULL_CHAR;
+      block_index = name_index + (size_t)bh->name_len + SIZE_OF_NULL_CHAR;
 
-      if (block_index >= header->payload_len)
+      if (block_index >= (size_t)header->payload_len)
         break;
     }
   } else {
@@ -91,37 +102,54 @@ int encode(uint8_t *buf, int buf_len, connected_user_t *users, int users_len) {
   };
 
   // Header
-  uint16_t payload_len = SIZE_OF_HEADER;
+  uint16_t payload_len = 0;
   uint8_t block_count = 0;
 
-  memcpy(buf, &magic_number, sizeof(uint16_t));
-  memcpy(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
+  memcpy_htons(buf, &magic_number, sizeof(uint16_t));
+  memcpy_htons(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
   memcpy(&buf[sizeof(uint16_t) * 2], &block_count, sizeof(uint8_t));
 
   // Payload
-
+  size_t index = SIZE_OF_HEADER;
   for (int i = 0; i < users_len; i++) {
     if (!users[i].connected)
       continue;
 
-    memcpy(&buf[payload_len], &users[i].score, sizeof(uint16_t));
-    payload_len += sizeof(uint16_t);
+    memcpy_htons(&buf[index], &users[i].score, sizeof(uint16_t));
+    index += sizeof(uint16_t);
 
-    memcpy(&buf[payload_len], &users[i].name_len, sizeof(uint8_t));
-    payload_len += sizeof(uint8_t);
+    memcpy(&buf[index], &users[i].name_len, sizeof(uint8_t));
+    index += sizeof(uint8_t);
 
     //  maybe strncpy?
     int _s = users[i].name_len + SIZE_OF_NULL_CHAR;
-    memcpy(&buf[payload_len], users[i].name, _s);
-    payload_len += _s;
+    memcpy(&buf[index], users[i].name, _s);
+    index += _s;
 
     block_count += 1;
   }
 
   if (block_count != 0) {
-    memcpy(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
+    size_t i = index - SIZE_OF_HEADER;
+
+    if (i < 0 || i > 65535) {
+      errno = ERANGE;
+      return -1;
+    }
+
+    payload_len = (uint16_t)(index - SIZE_OF_HEADER);
+    printf("payload_len %d\n", payload_len);
+    memcpy_htons(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
     memcpy(&buf[sizeof(uint16_t) * 2], &block_count, sizeof(uint8_t));
   }
 
-  return payload_len;
+  return index;
+}
+
+void *memcpy_htons(void *dest, const void *src, size_t n) {
+  if (!dest || !src)
+    return 0;
+
+  uint16_t _src = htons(*(uint16_t *)src);
+  return memcpy(dest, &_src, n);
 }

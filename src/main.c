@@ -139,7 +139,8 @@ void update_connected_users(int decoded_users_count) {
     if (!found) {
       for (int j = 0; j < MAX_CONNECTED_USERS; j++) {
         if (!connected_users[j].connected) {
-          if (decoded_users[i].name_len + SIZE_OF_NULL_CHAR > MAX_NAME_LEN) {
+          if (decoded_users[i].name_len + PROTO_SIZE_OF_NULL_CHAR >
+              MAX_NAME_LEN) {
             printf("name len is too large.\n");
             break;
           }
@@ -148,7 +149,7 @@ void update_connected_users(int decoded_users_count) {
           connected_users[j].name_len = decoded_users[i].name_len;
           connected_users[j].last_hb = time(NULL);
           strncpy(connected_users[j].name, decoded_users[i].name,
-                  decoded_users[i].name_len + SIZE_OF_NULL_CHAR);
+                  decoded_users[i].name_len + PROTO_SIZE_OF_NULL_CHAR);
           break;
         }
       }

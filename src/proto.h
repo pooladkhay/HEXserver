@@ -34,8 +34,8 @@
 #include "types.h"
 #include <stdint.h>
 
-#define SIZE_OF_NULL_CHAR 1
-#define PROTO_MAX_BLOCK_COUNT 128
+#define PROTO_SIZE_OF_NULL_CHAR (size_t)1
+#define PROTO_MAX_BLOCK_COUNT (size_t)128
 // #define MAX_MSG_PAYLOAD_LEN ??
 
 // Writes up to `decoded_users_max_len` users to `decoded_users`.

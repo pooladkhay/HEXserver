@@ -33,7 +33,13 @@ typedef struct _block_header {
 
 // Runs a 16-byte value stored in `dest` through `htons()`. Returns the result
 // of the underlying call to `memcpy()`.
-void *memcpy_htons(void *dest, const void *src, size_t n);
+static void *memcpy_htons(void *dest, const void *src, size_t n) {
+  if (dest == NULL || src == NULL)
+    return NULL;
+
+  uint16_t _src = htons(*(uint16_t *)src);
+  return memcpy(dest, &_src, n);
+}
 
 // Writes up to `decoded_users_max_len` users to `decoded_users`.
 // Return the number of users written, or `-1` on error with `errno` set.
@@ -74,7 +80,7 @@ int decode(uint8_t *raw_data, int raw_data_len, decoded_user_t *decoded_users,
       decoded_users[i].name_len = bh->name_len;
       decoded_users[i].name = (char *)&raw_data[name_index];
 
-      block_index = name_index + (size_t)bh->name_len + SIZE_OF_NULL_CHAR;
+      block_index = name_index + (size_t)bh->name_len + PROTO_SIZE_OF_NULL_CHAR;
 
       if (block_index >= (size_t)header->payload_len)
         break;
@@ -122,7 +128,7 @@ int encode(uint8_t *buf, int buf_len, connected_user_t *users, int users_len) {
     index += sizeof(uint8_t);
 
     //  maybe strncpy?
-    int _s = users[i].name_len + SIZE_OF_NULL_CHAR;
+    size_t _s = (size_t)(users[i].name_len) + PROTO_SIZE_OF_NULL_CHAR;
     memcpy(&buf[index], users[i].name, _s);
     index += _s;
 
@@ -138,18 +144,9 @@ int encode(uint8_t *buf, int buf_len, connected_user_t *users, int users_len) {
     }
 
     payload_len = (uint16_t)(index - SIZE_OF_HEADER);
-    printf("payload_len %d\n", payload_len);
     memcpy_htons(&buf[sizeof(uint16_t)], &payload_len, sizeof(uint16_t));
     memcpy(&buf[sizeof(uint16_t) * 2], &block_count, sizeof(uint8_t));
   }
 
   return index;
-}
-
-void *memcpy_htons(void *dest, const void *src, size_t n) {
-  if (!dest || !src)
-    return 0;
-
-  uint16_t _src = htons(*(uint16_t *)src);
-  return memcpy(dest, &_src, n);
 }

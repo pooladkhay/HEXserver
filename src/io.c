@@ -21,8 +21,6 @@ struct msghdr msg;
 struct iovec iov;
 
 struct io_uring ring;
-struct io_uring_sqe *sqe;
-struct io_uring_cqe *cqe;
 
 static int setup_socket(io_ctx_t *ctx) {
   server_fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -52,24 +50,6 @@ static int io_uring_init(io_ctx_t *ctx) {
   params.flags = IORING_SETUP_COOP_TASKRUN | IORING_SETUP_SINGLE_ISSUER;
 
   return io_uring_queue_init_params(Q_LEN, &ring, &params);
-}
-
-static int uring_process_cqe(io_ctx_t *ctx) {
-  // change fd to non-blocking for io_uring_peek_cqe
-  ret = io_uring_wait_cqe(&ring, &cqe);
-  if (ret < 0) {
-    perror("io_uring_wait_cqe:");
-    return -1;
-  }
-  if (cqe->res < 0) {
-    fprintf(stderr, "io_uring_wait_cqe - async request failed: %s\n",
-            strerror(-cqe->res));
-    return -1;
-  }
-
-  io_uring_cqe_seen(&ring, cqe);
-
-  return cqe->res;
 }
 
 int io_init(int io_type, io_ctx_t *ctx) {
@@ -104,6 +84,8 @@ int io_init(int io_type, io_ctx_t *ctx) {
 // This function reads up to`ctx->buf_len` bytes to `ctx->buf`. Returns the
 // number of bytes read or -1 for errors.
 int io_recvmsg(io_ctx_t *ctx) {
+  struct io_uring_sqe *sqe;
+
   sqe = io_uring_get_sqe(&ring);
   if (!sqe) {
     fprintf(stderr, "io_uring_get_sqe: %s\n",
@@ -126,6 +108,8 @@ int io_recvmsg(io_ctx_t *ctx) {
 }
 
 int io_sendmsg(io_ctx_t *ctx, int nbytes) {
+  struct io_uring_sqe *sqe;
+
   sqe = io_uring_get_sqe(&ring);
   if (!sqe) {
     fprintf(stderr, "io_uring_get_sqe: %s\n",
@@ -152,9 +136,16 @@ int io_sendmsg(io_ctx_t *ctx, int nbytes) {
 // (indicating success in sending a message). It returns number of bytes
 // received or sent.
 int io_wait(io_ctx_t *ctx) {
-  ret = uring_process_cqe(ctx);
+  struct io_uring_cqe *cqe;
+
+  ret = io_uring_wait_cqe(&ring, &cqe);
   if (ret < 0) {
-    fprintf(stderr, "uring_process_cqe: %s\n", strerror(-ret));
+    perror("io_uring_wait_cqe:");
+    return -1;
+  }
+  if (cqe->res < 0) {
+    fprintf(stderr, "io_uring_wait_cqe: request failed: %s\n",
+            strerror(-cqe->res));
     return -1;
   }
 
@@ -166,17 +157,20 @@ int io_wait(io_ctx_t *ctx) {
     case 'R':
       ctx->req_type = 'R';
       // --debug
-      printf("Received '%d' bytes from %s:%d\n", ret, client_ip, client_port);
+      printf("Received '%d' bytes from %s:%d\n", cqe->res, client_ip,
+             client_port);
       break;
     case 'S':
       ctx->req_type = 'S';
       // --debug
-      printf("Sent '%d' bytes to %s:%d\n", ret, client_ip, client_port);
+      printf("Sent '%d' bytes to %s:%d\n", cqe->res, client_ip, client_port);
       break;
     }
   }
 
-  return ret;
+  io_uring_cqe_seen(&ring, cqe);
+
+  return cqe->res;
 }
 
 int io_cleanup() {
